@@ -1,0 +1,106 @@
+name: Build FFmpeg for Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      ffmpeg_version:
+        description: FFmpeg git tag/branch to build
+        required: false
+        default: n6.0
+      api_level:
+        description: Android API level
+        required: false
+        default: "24"
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build ${{ matrix.abi }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [armeabi-v7a, arm64-v8a, x86, x86_64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm yasm pkg-config make
+
+      - name: Setup Android NDK r26d
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: Clone FFmpeg ${{ github.event.inputs.ffmpeg_version || 'n6.0' }}
+        run: |
+          git clone --depth=1 \
+            --branch "${{ github.event.inputs.ffmpeg_version || 'n6.0' }}" \
+            https://git.ffmpeg.org/ffmpeg.git ffmpeg
+
+      - name: Build ${{ matrix.abi }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ABI: ${{ matrix.abi }}
+          API: ${{ github.event.inputs.api_level || '24' }}
+          FFMPEG_SRC: ${{ github.workspace }}/ffmpeg
+          OUTPUT_DIR: ${{ github.workspace }}/output
+        run: |
+          chmod +x scripts/build-ffmpeg.sh
+          ./scripts/build-ffmpeg.sh
+
+      - name: Stage artifact layout (${{ matrix.abi }})
+        run: |
+          mkdir -p staged/jniLibs/${{ matrix.abi }}
+          cp output/${{ matrix.abi }}/lib/lib*_own.so staged/jniLibs/${{ matrix.abi }}/
+          mkdir -p staged/include
+          # Headers are ABI-independent; only include once (during the arm64-v8a build).
+          if [ "${{ matrix.abi }}" = "arm64-v8a" ]; then
+            cp -r output/${{ matrix.abi }}/include/* staged/include/
+          fi
+          ls -la staged/jniLibs/${{ matrix.abi }}/
+
+      - name: Upload artifact (${{ matrix.abi }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-android-${{ matrix.abi }}
+          path: staged/
+          retention-days: 14
+          if-no-files-found: error
+
+  package:
+    name: Package combined artifact
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download all per-ABI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: parts/
+
+      - name: Merge into single tree
+        run: |
+          mkdir -p combined/jniLibs combined/include
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            cp -r "parts/ffmpeg-android-${abi}/jniLibs/${abi}" combined/jniLibs/
+          done
+          cp -r parts/ffmpeg-android-arm64-v8a/include/* combined/include/
+          echo "--- jniLibs ---"
+          find combined/jniLibs -type f -name 'lib*_own.so' | sort
+          echo "--- header dirs ---"
+          ls combined/include | sort
+
+      - name: Upload combined artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-android-libs
+          path: combined/
+          retention-days: 30
+          if-no-files-found: error
