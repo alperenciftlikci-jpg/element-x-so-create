@@ -84,7 +84,11 @@ cd "$BUILD_DIR"
 
 EXTRA_CONFIGURE_ARGS=()
 if [ "${DISABLE_X86ASM:-0}" = "1" ]; then
-    EXTRA_CONFIGURE_ARGS+=(--disable-x86asm)
+    # 32-bit x86 + shared libs: FFmpeg's C-emitted global tables (e.g. ff_h264_cabac_tables)
+    # produce R_386_32 relocations even with -fPIC, and inline asm produces the same on
+    # nasm-built objects. Disabling all asm (inline + external) sidesteps both. Loses some
+    # codec performance on 32-bit x86 — acceptable since that ABI is essentially emulator-only.
+    EXTRA_CONFIGURE_ARGS+=(--disable-asm)
 fi
 
 # Minimal configure: H.264 + HEVC decode only, shared libs, no programs/docs/network.
