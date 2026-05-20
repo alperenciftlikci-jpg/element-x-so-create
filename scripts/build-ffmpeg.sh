@@ -36,10 +36,12 @@ case "$ABI" in
         ARCH=x86
         CPU=i686
         TARGET=i686-linux-android
-        # FFmpeg's x86 PIC handling on Android needs text relocations disabled
-        # via --disable-asm (or limited asm) on some configurations; we keep
-        # the default asm and rely on -fPIC + the NDK toolchain.
+        # 32-bit x86 with shared libs: FFmpeg's nasm-generated objects need text
+        # relocations that lld rejects (R_386_32 against local symbols). The
+        # standard workaround is to disable x86 nasm; FFmpeg still uses inline
+        # C and intrinsics. Modern devices barely ship 32-bit x86 anyway.
         CFLAGS_EXTRA=""
+        DISABLE_X86ASM=1
         ;;
     x86_64)
         ARCH=x86_64
@@ -80,6 +82,11 @@ mkdir -p "$BUILD_DIR"
 
 cd "$BUILD_DIR"
 
+EXTRA_CONFIGURE_ARGS=()
+if [ "${DISABLE_X86ASM:-0}" = "1" ]; then
+    EXTRA_CONFIGURE_ARGS+=(--disable-x86asm)
+fi
+
 # Minimal configure: H.264 + HEVC decode only, shared libs, no programs/docs/network.
 # Build suffix `_own` makes our .so filenames distinct from NextLib's so they can sit
 # side by side in the APK without conflict.
@@ -119,7 +126,8 @@ cd "$BUILD_DIR"
     --enable-decoder=hevc \
     --enable-parser=h264 \
     --enable-parser=hevc \
-    --enable-swscale
+    --enable-swscale \
+    "${EXTRA_CONFIGURE_ARGS[@]}"
 
 make -j"$JOBS"
 make install
