@@ -111,6 +111,9 @@ cd "$BUILD_DIR"
     --disable-avformat \
     --disable-postproc \
     --disable-avfilter \
+    --disable-vulkan \
+    --disable-v4l2-m2m \
+    --disable-cuda-llvm \
     --enable-pic \
     --enable-decoder=h264 \
     --enable-decoder=hevc \
